@@ -17,50 +17,53 @@ import java.time.zone.ZoneOffsetTransitionRule;
 import java.time.zone.ZoneRules;
 import java.time.zone.ZoneRulesException;
 import java.time.zone.ZoneRulesProvider;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.NavigableMap;
-import java.util.Set;
-import java.util.TreeMap;
-import java.util.TreeSet;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * args[0]: Directory path for the first tzdb.dat file
+ * args[1]: Directory path for the second tzdb.dat file
+ */
 public class Main {
     public static void main(String[] args) {
-        var tzdb1 = new TzdbZoneRulesProvider(args[0]);
-        System.out.println("ver: " + tzdb1.versionId);
-        System.out.println("regionIds: " + tzdb1.regionIds);
-        System.out.println("regionToRules: " + tzdb1.regionToRules);
-        var tzdb2 = new TzdbZoneRulesProvider(args[1]);
-        System.out.println("ver: " + tzdb2.versionId);
-        System.out.println("regionIds: " + tzdb2.regionIds);
-        System.out.println("regionToRules: " + tzdb2.regionToRules);
+        TzdbZoneRulesProvider tzdbs[] = new TzdbZoneRulesProvider[2];
+        tzdbs[0] = new TzdbZoneRulesProvider(args[0]);
+        tzdbs[1] = new TzdbZoneRulesProvider(args[1]);
+        Arrays.stream(tzdbs).forEach(tzdb -> {
+            System.out.println("ver: " + tzdb.versionId);
+//            System.out.println("\tregionIds: " + tzdb.regionIds);
+//            System.out.println("\tregionToRules: " + tzdb.regionToRules);
+        });
 
-        diff(tzdb2.regionIds, tzdb1.regionIds);
+        diff(tzdbs[0].regionIds, tzdbs[1].regionIds);
 
-        var diffIds = tzdb2.regionIds.stream()
-                .filter(id -> !tzdb1.provideRules(id, true).equals(tzdb2.provideRules(id, true)))
+        var diffIds = tzdbs[1].regionIds.stream()
+                .filter(id -> !Objects.equals(tzdbs[0].provideRules(id, true), tzdbs[1].provideRules(id, true)))
                 .toList();
-        System.out.println("ids whose rules differ: " + diffIds);
-        System.out.println("rule1: " + tzdb1.provideRules("Africa/Abidjan", true).getTransitions());
-        System.out.println("rule1: " + tzdb2.provideRules("Africa/Abidjan", true).getTransitions());
+        System.out.println("IDs whose rules differ: " + diffIds);
+        diffIds.stream().forEach(id -> {
+            System.out.println("id: " + id);
+            Arrays.stream(tzdbs).forEach(tzdb -> {
+                var zr = tzdb.provideRules(id, true);
+                System.out.println("\t" + (zr != null ? zr.getTransitions() : null));
+            });
+        });
     }
 
-    private static Set<String> diff(Collection<? extends String> expected, Collection<? extends String> actual) {
-        Set<String> s1 = new TreeSet<>(expected);
-        s1.removeAll(actual);
+    private static void diff(Collection<? extends String> regionIds0, Collection<? extends String> regionIds1) {
+        Set<String> s0 = new TreeSet<>(regionIds0);
+        s0.removeAll(regionIds1);
+        if (!s0.isEmpty()) {
+            System.out.println("\tExtra regionId(s) in tzdb0: " + s0);
+        }
+        Set<String> s1 = new TreeSet<>(regionIds1);
+        s1.removeAll(regionIds0);
         if (!s1.isEmpty()) {
-            System.out.println("\tMissing locale(s): " + s1);
+            System.out.println("\tExtra regionId(s) in tzdb1: " + s1);
         }
-        Set<String> s2 = new TreeSet<>(actual);
-        s2.removeAll(expected);
-        if (!s2.isEmpty()) {
-            System.out.println("\tExtra locale(s): " + s2);
+        if (s0.isEmpty() && s1.isEmpty()) {
+            System.out.println("\tTwo regionIds are identical");
         }
-        return s2;
     }
 }
 
@@ -112,7 +115,8 @@ final class TzdbZoneRulesProvider extends ZoneRulesProvider {
         // forCaching flag is ignored because this is not a dynamic provider
         Object obj = regionToRules.get(zoneId);
         if (obj == null) {
-            throw new ZoneRulesException("Unknown time-zone ID: " + zoneId);
+            System.out.println("Unknown time-zone ID: " + zoneId);
+            return null;
         }
         try {
             if (obj instanceof byte[] bytes) {
@@ -122,7 +126,8 @@ final class TzdbZoneRulesProvider extends ZoneRulesProvider {
             }
             return (ZoneRules) obj;
         } catch (Exception ex) {
-            throw new ZoneRulesException("Invalid binary time-zone data: TZDB:" + zoneId + ", version: " + versionId, ex);
+            System.out.println("Invalid binary time-zone data: TZDB:" + zoneId + ", version: " + versionId);
+            return null;
         }
     }
 
