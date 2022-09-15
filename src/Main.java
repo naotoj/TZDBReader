@@ -2,16 +2,13 @@ import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.DataInput;
 import java.io.DataInputStream;
-import java.io.DataOutput;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.Serializable;
 import java.io.StreamCorruptedException;
-import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
-import java.time.ZoneOffset;
 import java.time.zone.ZoneOffsetTransition;
 import java.time.zone.ZoneOffsetTransitionRule;
 import java.time.zone.ZoneRules;
@@ -195,31 +192,13 @@ final class TzdbZoneRulesProvider extends ZoneRulesProvider {
 }
 
 final class Ser {
-
-    /**
-     * Serialization version.
-     */
-    private static final long serialVersionUID = -8885321777449118786L;
-
-    /** Type for ZoneRules. */
-    static final byte ZRULES = 1;
-    /** Type for ZoneOffsetTransition. */
-    static final byte ZOT = 2;
-    /** Type for ZoneOffsetTransitionRule. */
-    static final byte ZOTRULE = 3;
-
-    /** The type being serialized. */
-    private byte type;
-    /** The object being serialized. */
-    private Serializable object;
-
     /**
      * Constructor for deserialization.
      */
     public Ser() {
     }
 
-    static Serializable read(DataInput in) throws IOException, ClassNotFoundException {
+    static Serializable read(DataInput in) throws IOException {
         byte type = in.readByte();
         try {
             return readInternal(type, in);
@@ -228,95 +207,22 @@ final class Ser {
         }
     }
 
-    private static Serializable readInternal(byte type, DataInput in)
-            throws IOException, ClassNotFoundException, Throwable {
-        MethodHandle zrre = MethodHandles.privateLookupIn(ZoneRules.class, MethodHandles.lookup()).findStatic(ZoneRules.class, "readExternal", MethodType.methodType(ZoneRules.class, DataInput.class));
-        MethodHandle zotre = MethodHandles.privateLookupIn(ZoneOffsetTransition.class, MethodHandles.lookup()).findStatic(ZoneOffsetTransition.class, "readExternal", MethodType.methodType(ZoneOffsetTransition.class, DataInput.class));
-        MethodHandle zotrre = MethodHandles.privateLookupIn(ZoneOffsetTransitionRule.class, MethodHandles.lookup()).findStatic(ZoneOffsetTransitionRule.class, "readExternal", MethodType.methodType(ZoneOffsetTransitionRule.class, DataInput.class));
+    private static Serializable readInternal(byte type, DataInput in) throws Throwable {
         return (Serializable) switch (type) {
-            case ZRULES -> zrre.invoke(in);
-            case ZOT -> zotre.invoke(in);
-            case ZOTRULE -> zotrre.invoke(in);
+            case 1 -> MethodHandles.privateLookupIn(ZoneRules.class, MethodHandles.lookup())
+                    .findStatic(ZoneRules.class, "readExternal",
+                            MethodType.methodType(ZoneRules.class, DataInput.class))
+                    .invoke(in);
+            case 2 -> MethodHandles.privateLookupIn(ZoneOffsetTransition.class, MethodHandles.lookup())
+                    .findStatic(ZoneOffsetTransition.class, "readExternal",
+                            MethodType.methodType(ZoneOffsetTransition.class, DataInput.class))
+                    .invoke(in);
+            case 3 -> MethodHandles.privateLookupIn(ZoneOffsetTransitionRule.class, MethodHandles.lookup())
+                    .findStatic(ZoneOffsetTransitionRule.class, "readExternal",
+                            MethodType.methodType(ZoneOffsetTransitionRule.class, DataInput.class))
+                    .invoke(in);
             default -> throw new StreamCorruptedException("Unknown serialized type");
         };
     }
-
-    /**
-     * Returns the object that will replace this one.
-     *
-     * @return the read object, should never be null
-     */
-    private Object readResolve() {
-        return object;
-    }
-
-    //-----------------------------------------------------------------------
-    /**
-     * Writes the state to the stream.
-     *
-     * @param offset  the offset, not null
-     * @param out  the output stream, not null
-     * @throws IOException if an error occurs
-     */
-    static void writeOffset(ZoneOffset offset, DataOutput out) throws IOException {
-        final int offsetSecs = offset.getTotalSeconds();
-        int offsetByte = offsetSecs % 900 == 0 ? offsetSecs / 900 : 127;  // compress to -72 to +72
-        out.writeByte(offsetByte);
-        if (offsetByte == 127) {
-            out.writeInt(offsetSecs);
-        }
-    }
-
-    /**
-     * Reads the state from the stream.
-     *
-     * @param in  the input stream, not null
-     * @return the created object, not null
-     * @throws IOException if an error occurs
-     */
-    static ZoneOffset readOffset(DataInput in) throws IOException {
-        int offsetByte = in.readByte();
-        return (offsetByte == 127 ? ZoneOffset.ofTotalSeconds(in.readInt()) : ZoneOffset.ofTotalSeconds(offsetByte * 900));
-    }
-
-    //-----------------------------------------------------------------------
-    /**
-     * Writes the state to the stream.
-     *
-     * @param epochSec  the epoch seconds, not null
-     * @param out  the output stream, not null
-     * @throws IOException if an error occurs
-     */
-    static void writeEpochSec(long epochSec, DataOutput out) throws IOException {
-        if (epochSec >= -4575744000L && epochSec < 10413792000L && epochSec % 900 == 0) {  // quarter hours between 1825 and 2300
-            int store = (int) ((epochSec + 4575744000L) / 900);
-            out.writeByte((store >>> 16) & 255);
-            out.writeByte((store >>> 8) & 255);
-            out.writeByte(store & 255);
-        } else {
-            out.writeByte(255);
-            out.writeLong(epochSec);
-        }
-    }
-
-    /**
-     * Reads the state from the stream.
-     *
-     * @param in  the input stream, not null
-     * @return the epoch seconds, not null
-     * @throws IOException if an error occurs
-     */
-    static long readEpochSec(DataInput in) throws IOException {
-        int hiByte = in.readByte() & 255;
-        if (hiByte == 255) {
-            return in.readLong();
-        } else {
-            int midByte = in.readByte() & 255;
-            int loByte = in.readByte() & 255;
-            long tot = ((hiByte << 16) + (midByte << 8) + loByte);
-            return (tot * 900) - 4575744000L;
-        }
-    }
-
 }
 
