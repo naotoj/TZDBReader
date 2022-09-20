@@ -16,50 +16,66 @@ import java.time.zone.ZoneRulesException;
 import java.time.zone.ZoneRulesProvider;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.IntStream;
 
 /**
- * args[0]: Directory path for the first tzdb.dat file
- * args[1]: Directory path for the second tzdb.dat file
+ * args[0]: first tzdb.dat file
+ * args[1]: second tzdb.dat file
  */
 public class Main {
     public static void main(String[] args) {
+        if (args.length != 2) {
+            System.err.print("Requires two tzdb.dat files. Exiting");
+            System.exit(-1);
+        }
         TzdbZoneRulesProvider tzdbs[] = new TzdbZoneRulesProvider[2];
-        tzdbs[0] = new TzdbZoneRulesProvider(args[0]);
-        tzdbs[1] = new TzdbZoneRulesProvider(args[1]);
-        Arrays.stream(tzdbs).forEach(tzdb -> {
-            System.out.println("ver: " + tzdb.versionId);
-//            System.out.println("\tregionIds: " + tzdb.regionIds);
-//            System.out.println("\tregionToRules: " + tzdb.regionToRules);
+        IntStream.range(0, 2).forEach(i -> {
+            tzdbs[i] = new TzdbZoneRulesProvider(args[i]);
+            System.out.printf("tzdb[%x] ver: %s\n", i, tzdbs[i].versionId);
         });
 
-        diff(tzdbs[0].regionIds, tzdbs[1].regionIds);
-
-        var diffIds = tzdbs[1].regionIds.stream()
-                .filter(id -> !Objects.equals(tzdbs[0].provideRules(id, true), tzdbs[1].provideRules(id, true)))
-                .toList();
-        System.out.println("IDs whose rules differ: " + diffIds);
-        diffIds.stream().forEach(id -> {
-            System.out.println("id: " + id);
-            Arrays.stream(tzdbs).forEach(tzdb -> {
-                var zr = tzdb.provideRules(id, true);
-                System.out.println("\t" + (zr != null ? zr.getTransitions() : null));
-            });
-        });
+        diffMissingExtra(tzdbs);
+        diffRules(tzdbs);
     }
 
-    private static void diff(Collection<? extends String> regionIds0, Collection<? extends String> regionIds1) {
+    private static void diffMissingExtra(TzdbZoneRulesProvider[] tzdbs) {
+        System.out.print("\nMissing/Extra ids comparison: ");
+
+        var regionIds0 = tzdbs[0].regionIds;
+        var regionIds1 = tzdbs[1].regionIds;
         Set<String> s0 = new TreeSet<>(regionIds0);
         s0.removeAll(regionIds1);
         if (!s0.isEmpty()) {
-            System.out.println("\tExtra regionId(s) in tzdb0: " + s0);
+            System.out.println("Extra regionId(s) in tzdb[0]: " + s0);
         }
         Set<String> s1 = new TreeSet<>(regionIds1);
         s1.removeAll(regionIds0);
         if (!s1.isEmpty()) {
-            System.out.println("\tExtra regionId(s) in tzdb1: " + s1);
+            System.out.println("Extra regionId(s) in tzdb[1]: " + s1);
         }
         if (s0.isEmpty() && s1.isEmpty()) {
-            System.out.println("\tTwo regionIds are identical");
+            System.out.println("Two regionIds are identical");
+        }
+        System.out.println();
+    }
+
+    private static void diffRules(TzdbZoneRulesProvider[] tzdbs) {
+        var diffIds = tzdbs[1].regionIds.stream()
+                .filter(id -> tzdbs[0].regionIds.contains(id) && tzdbs[1].regionIds.contains(id))
+                .filter(id -> !Objects.equals(tzdbs[0].provideRules(id, true), tzdbs[1].provideRules(id, true)))
+                .toList();
+        if (!diffIds.isEmpty()) {
+            System.out.println("IDs whose rules differ: " + diffIds);
+            diffIds.stream()
+                    .forEach(id -> {
+                        System.out.println("id: " + id);
+                        Arrays.stream(tzdbs).forEach(tzdb -> {
+                            var zr = tzdb.provideRules(id, true);
+                            System.out.println("\t" + (zr != null ? zr.getTransitions() : null));
+                        });
+                    });
+        } else {
+            System.out.println("IDs exist in both tzdb.dat all share the same rules");
         }
     }
 }
@@ -90,11 +106,11 @@ final class TzdbZoneRulesProvider extends ZoneRulesProvider {
      *
      * @throws ZoneRulesException if unable to load
      */
-    public TzdbZoneRulesProvider(String libPath) {
+    public TzdbZoneRulesProvider(String tzdbFile) {
         try {
             try (DataInputStream dis = new DataInputStream(
                     new BufferedInputStream(new FileInputStream(
-                            new File(libPath, "tzdb.dat"))))) {
+                            tzdbFile)))) {
                 load(dis);
             }
         } catch (Exception ex) {
