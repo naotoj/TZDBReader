@@ -71,6 +71,7 @@ public class Main {
         var diffIds = regionIds1.stream()
                 .filter(id -> regionIds0.contains(id) && regionIds1.contains(id))
                 .filter(id -> !Objects.equals(getRules(zrps[0], id), getRules(zrps[1], id)))
+                .sorted()
                 .toList();
         if (!diffIds.isEmpty()) {
             System.out.println("IDs whose rules differ: " + diffIds);
