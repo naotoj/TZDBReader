@@ -2,13 +2,13 @@ import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.DataInput;
 import java.io.DataInputStream;
-import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.Serializable;
 import java.io.StreamCorruptedException;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
+import java.time.ZoneId;
 import java.time.zone.ZoneOffsetTransition;
 import java.time.zone.ZoneOffsetTransitionRule;
 import java.time.zone.ZoneRules;
@@ -19,30 +19,35 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.IntStream;
 
 /**
- * args[0]: first tzdb.dat file
- * args[1]: second tzdb.dat file
+ * Tool to read contents in tzdb.dat files and compare.
+ *
+ * args[0]: tzdb.dat file
+ * args[1] (optional): second tzdb.dat file. If there's no second
+ * tzdb.dat file provided, the first tzdb.dat is compared against
+ * the running JVM's ZoneIds
  */
 public class Main {
     public static void main(String[] args) {
-        if (args.length != 2) {
-            System.err.print("Requires two tzdb.dat files. Exiting");
+        if (args.length == 0) {
+            System.err.print("Requires at least one tzdb.dat file. Exiting");
             System.exit(-1);
         }
-        TzdbZoneRulesProvider tzdbs[] = new TzdbZoneRulesProvider[2];
+        ZoneRulesProvider[] zrps = new ZoneRulesProvider[2];
         IntStream.range(0, 2).forEach(i -> {
-            tzdbs[i] = new TzdbZoneRulesProvider(args[i]);
-            System.out.printf("tzdb[%x] ver: %s\n", i, tzdbs[i].versionId);
+            zrps[i] = i < args.length ? new TzdbZoneRulesProvider(args[i]) : new CurrentZoneRulesProvider();
+            System.out.printf("tzdb[%x] ver: %s\n", i, zrps[i] instanceof TzdbZoneRulesProvider tzdb ? tzdb.versionId : "Running JDK");
         });
 
-        diffMissingExtra(tzdbs);
-        diffRules(tzdbs);
+        diffMissingExtra(zrps);
+        diffRules(zrps);
     }
 
-    private static void diffMissingExtra(TzdbZoneRulesProvider[] tzdbs) {
+    private static void diffMissingExtra(ZoneRulesProvider[] zrps) {
         System.out.print("\nMissing/Extra ids comparison: ");
 
-        var regionIds0 = tzdbs[0].regionIds;
-        var regionIds1 = tzdbs[1].regionIds;
+        var regionIds0 = getIds(zrps[0]);
+        var regionIds1 = getIds(zrps[1]);
+
         Set<String> s0 = new TreeSet<>(regionIds0);
         s0.removeAll(regionIds1);
         if (!s0.isEmpty()) {
@@ -59,24 +64,40 @@ public class Main {
         System.out.println();
     }
 
-    private static void diffRules(TzdbZoneRulesProvider[] tzdbs) {
-        var diffIds = tzdbs[1].regionIds.stream()
-                .filter(id -> tzdbs[0].regionIds.contains(id) && tzdbs[1].regionIds.contains(id))
-                .filter(id -> !Objects.equals(tzdbs[0].provideRules(id, true), tzdbs[1].provideRules(id, true)))
+    private static void diffRules(ZoneRulesProvider[] zrps) {
+        var regionIds0 = getIds(zrps[0]);
+        var regionIds1 = getIds(zrps[1]);
+
+        var diffIds = regionIds1.stream()
+                .filter(id -> regionIds0.contains(id) && regionIds1.contains(id))
+                .filter(id -> !Objects.equals(getRules(zrps[0], id), getRules(zrps[1], id)))
                 .toList();
         if (!diffIds.isEmpty()) {
             System.out.println("IDs whose rules differ: " + diffIds);
             diffIds.stream()
+                    .sorted()
                     .forEach(id -> {
                         System.out.println("id: " + id);
-                        Arrays.stream(tzdbs).forEach(tzdb -> {
-                            var zr = tzdb.provideRules(id, true);
+                        Arrays.stream(zrps).forEach(zrp -> {
+                            var zr = getRules(zrp, id);
                             System.out.println("\t" + (zr != null ? zr.getTransitions() : null));
                         });
                     });
         } else {
             System.out.println("IDs exist in both tzdb.dat all share the same rules");
         }
+    }
+
+    private static Set<String> getIds(ZoneRulesProvider zrp) {
+        return zrp instanceof TzdbZoneRulesProvider tzdbzrp ?
+            tzdbzrp.provideZoneIds() :
+            ((CurrentZoneRulesProvider)zrp).provideZoneIds();
+    }
+
+    private static ZoneRules getRules(ZoneRulesProvider zrp, String id) {
+        return zrp instanceof TzdbZoneRulesProvider tzdbzrp ?
+            tzdbzrp.provideRules(id, true) :
+            ((CurrentZoneRulesProvider)zrp).provideRules(id, true);
     }
 }
 
@@ -119,12 +140,12 @@ final class TzdbZoneRulesProvider extends ZoneRulesProvider {
     }
 
     @Override
-    protected Set<String> provideZoneIds() {
+    public Set<String> provideZoneIds() {
         return new HashSet<>(regionIds);
     }
 
     @Override
-    protected ZoneRules provideRules(String zoneId, boolean forCaching) {
+    public ZoneRules provideRules(String zoneId, boolean forCaching) {
         // forCaching flag is ignored because this is not a dynamic provider
         Object obj = regionToRules.get(zoneId);
         if (obj == null) {
@@ -146,12 +167,7 @@ final class TzdbZoneRulesProvider extends ZoneRulesProvider {
 
     @Override
     protected NavigableMap<String, ZoneRules> provideVersions(String zoneId) {
-        TreeMap<String, ZoneRules> map = new TreeMap<>();
-        ZoneRules rules = getRules(zoneId, false);
-        if (rules != null) {
-            map.put(versionId, rules);
-        }
-        return map;
+        return null;
     }
 
     /**
@@ -242,3 +258,19 @@ final class Ser {
     }
 }
 
+final class CurrentZoneRulesProvider extends ZoneRulesProvider {
+    @Override
+    public Set<String> provideZoneIds() {
+        return new HashSet<>(ZoneId.getAvailableZoneIds());
+    }
+
+    @Override
+    public ZoneRules provideRules(String zoneId, boolean forCaching) {
+        return ZoneId.of(zoneId).getRules();
+    }
+
+    @Override
+    protected NavigableMap<String, ZoneRules> provideVersions(String zoneId) {
+        return null;
+    }
+}
