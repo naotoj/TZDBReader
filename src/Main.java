@@ -34,7 +34,7 @@ public class Main {
         }
         ZoneRulesProvider[] zrps = new ZoneRulesProvider[2];
         IntStream.range(0, 2).forEach(i -> {
-            zrps[i] = i < args.length ? new TzdbZoneRulesProvider(args[i]) : new CurrentZoneRulesProvider();
+            zrps[i] = i < args.length ? new TzdbZoneRulesProvider(args[i]) : new RuntimeZoneRulesProvider();
             System.out.printf("tzdb[%x] ver: %s\n", i, zrps[i] instanceof TzdbZoneRulesProvider tzdb ? tzdb.versionId : "Running JDK");
         });
 
@@ -92,13 +92,13 @@ public class Main {
     private static Set<String> getIds(ZoneRulesProvider zrp) {
         return zrp instanceof TzdbZoneRulesProvider tzdbzrp ?
             tzdbzrp.provideZoneIds() :
-            ((CurrentZoneRulesProvider)zrp).provideZoneIds();
+            ((RuntimeZoneRulesProvider)zrp).provideZoneIds();
     }
 
     private static ZoneRules getRules(ZoneRulesProvider zrp, String id) {
         return zrp instanceof TzdbZoneRulesProvider tzdbzrp ?
             tzdbzrp.provideRules(id, true) :
-            ((CurrentZoneRulesProvider)zrp).provideRules(id, true);
+            ((RuntimeZoneRulesProvider)zrp).provideRules(id, true);
     }
 }
 
@@ -259,7 +259,7 @@ final class Ser {
     }
 }
 
-final class CurrentZoneRulesProvider extends ZoneRulesProvider {
+final class RuntimeZoneRulesProvider extends ZoneRulesProvider {
     @Override
     public Set<String> provideZoneIds() {
         return new HashSet<>(ZoneId.getAvailableZoneIds());
