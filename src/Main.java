@@ -183,7 +183,7 @@ final class TzdbZoneRulesProvider extends ZoneRulesProvider {
         }
         // group
         String groupId = dis.readUTF();
-        if ("TZDB".equals(groupId) == false) {
+        if (!"TZDB".equals(groupId)) {
             throw new StreamCorruptedException("File format not recognised");
         }
         // versions
