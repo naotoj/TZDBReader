@@ -20,11 +20,10 @@ import java.util.stream.IntStream;
 
 /**
  * Tool to read contents in tzdb.dat files and compare.
- *
  * args[0]: tzdb.dat file name
  * args[1] (optional): second tzdb.dat file. If there's no second
  * tzdb.dat file provided, the first tzdb.dat is compared against
- * the running JVM's ZoneIds
+ * the running JVM's ZoneIds.
  */
 public class Main {
     public static void main(String[] args) {
